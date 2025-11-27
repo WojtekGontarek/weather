@@ -1,9 +1,9 @@
 import "bootstrap/dist/css/bootstrap.css";
-import { useState } from "react";
+import {useEffect, useState} from "react";
 import CityCard from "./CityCard.jsx";
+import API_KEY from "./api_keys.jsx";
 
 function Home() {
-    const API_KEY = "zpka_3aba0f05ae8247e8b90a06d1d29f7d07_8fdc1727";
     const testMode = true;
 
     const [nameInput, setNameInput] = useState("");
@@ -13,26 +13,32 @@ function Home() {
     function handleInputChange(e) {
         const value = e.target.value;
         setNameInput(value);
-        if (testMode) return;
-        const requestUrl = "https://dataservice.accuweather.com/locations/v1/cities/autocomplete";
-        const fetchUrl = `${requestUrl}?q=${encodeURIComponent(value)}&language=pl-pl`;
-
-        const requestOptions = {
-            method: "GET",
-            redirect: "follow",
-            headers: {
-                Authorization: `Bearer ${API_KEY}`
-            }
-        };
-
-        fetch(fetchUrl, requestOptions)
-            .then(response => response.json())
-            .then(result => {
-                // zaktualizuj stan wynikami wyszukiwania
-                setSuggestedCities(result);
-            })
-            .catch(error => console.log("error", error));
     }
+
+    useEffect(() => {
+        if (testMode) return;
+        const timeOut = setTimeout(() => {
+            const requestUrl = "https://dataservice.accuweather.com/locations/v1/cities/autocomplete";
+            const fetchUrl = `${requestUrl}?q=${encodeURIComponent(nameInput)}&language=pl-pl`;
+
+            const requestOptions = {
+                method: "GET",
+                redirect: "follow",
+                headers: {
+                    Authorization: `Bearer ${API_KEY}`
+                }
+            };
+
+            fetch(fetchUrl, requestOptions)
+                .then(response => response.json())
+                .then(result => {
+                    // zaktualizuj stan wynikami wyszukiwania
+                    setSuggestedCities(result);
+                })
+                .catch(error => console.log("error", error));
+        }, 500)
+        return () => clearTimeout(timeOut);
+    }, [nameInput, testMode]);
 
     function handleClickSuggestion(e, city) {
         setNameInput(city.LocalizedName);
@@ -109,7 +115,8 @@ function Home() {
             const newCity = {
                 name: nameInput,
                 wikiData: data1,
-                wikiImageUrl: imageUrl
+                wikiImageUrl: imageUrl,
+                accuwData: weatherData
             };
             setCities([...cities, newCity]);
             setNameInput("");
@@ -118,6 +125,7 @@ function Home() {
             console.log("error", error);
         }
         console.log(cities);
+
     }
 
 
