@@ -4,11 +4,39 @@ import CityCard from "./CityCard.jsx";
 import API_KEY from "./api_keys.jsx";
 
 function Home() {
-    const testMode = true;
+    const testMode = false; // Set to true to disable autocomplete API calls for testing purposes
 
     const [nameInput, setNameInput] = useState("");
-    const [cities, setCities] = useState([]);
+    // Load saved cities from localStorage using lazy initializer to avoid setting state inside an effect
+    const [cities, setCities] = useState(() => {
+        try {
+            const raw = localStorage.getItem('cities');
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                if (Array.isArray(parsed)) return parsed;
+            }
+        } catch (err) {
+            console.log('Error reading cities from localStorage', err);
+        }
+        return [];
+    });
     const [suggestedCities, setSuggestedCities] = useState([]);
+    const [isAdding, setIsAdding] = useState(false);
+
+    // Persist cities to localStorage whenever they change
+    useEffect(() => {
+        try {
+            localStorage.setItem('cities', JSON.stringify(cities));
+        } catch (err) {
+            console.log('Error saving cities to localStorage', err);
+        }
+    }, [cities]);
+
+    // Remove city by key
+    function removeCity(key) {
+        if (!key) return;
+        setCities(prev => prev.filter(c => c.key !== key));
+    }
 
     function handleInputChange(e) {
         const value = e.target.value;
@@ -32,7 +60,6 @@ function Home() {
             fetch(fetchUrl, requestOptions)
                 .then(response => response.json())
                 .then(result => {
-                    // zaktualizuj stan wynikami wyszukiwania
                     setSuggestedCities(result);
                 })
                 .catch(error => console.log("error", error));
@@ -46,91 +73,71 @@ function Home() {
     }
 
     async function handleAddCity() {
-        const weatherRequestOptions = {
-            method: "GET",
-            redirect: "follow",
-            headers: {
-                Authorization: `Bearer ${API_KEY}`
-            }
-        };
-        const weatherRequestUrl = `https://dataservice.accuweather.com/locations/v1/cities/search?q=${encodeURIComponent(nameInput)}&language=pl-pl`;
-        let englishName = null;
-        const weatherResponse = await fetch(weatherRequestUrl, weatherRequestOptions);
-        const weatherData = await weatherResponse.json();
-        if (weatherData && weatherData.length > 0) {
-            englishName = weatherData[0].EnglishName;
-        } else {
-            console.log("Nie znaleziono miasta w AccuWeather");
-            return;
-        }
+        setIsAdding(true);
         try {
+            const name = nameInput.trim().toLowerCase();
+            const weatherRequestOptions = {
+                method: "GET",
+                redirect: "follow",
+                headers: {
+                    Authorization: `Bearer ${API_KEY}`
+                }
+            };
+            const weatherRequestUrl = `https://dataservice.accuweather.com/locations/v1/cities/search?q=${encodeURIComponent(name)}&language=pl-pl`;
+            let englishName = null;
+            const weatherResponse = await fetch(weatherRequestUrl, weatherRequestOptions);
+            const weatherData = await weatherResponse.json();
+            if (weatherData && weatherData.length > 0) {
+                englishName = weatherData[0].EnglishName;
+            } else {
+                console.log("Nie znaleziono miasta w AccuWeather");
+                return;
+            }
+
             if (!englishName) {
                 console.log("Brak angielskiej nazwy miasta, nie można kontynuować.");
                 return;
             }
-            const wikiUrl = "https://en.wikipedia.org/w/api.php";
-            // 1) Pobierz listę obrazów dla strony
-            const params1 = new URLSearchParams({
-                action: "query",
-                titles: nameInput,
-                format: "json",
-                prop: "images",
-                imlimit: "1",
-                origin: "*"
-            });
-            const res1 = await fetch(`${wikiUrl}?${params1.toString()}`);
-            const data1 = await res1.json();
 
-            // Wyciągnij pierwszy tytuł pliku, jeśli istnieje
-            let imageTitle = null;
-            if (data1.query && data1.query.pages) {
-                const page = Object.values(data1.query.pages)[0];
-                if (page && page.images && page.images.length > 0) {
-                    imageTitle = page.images[0].title; // np. "File:Example.jpg"
-                }
-            }
-            console.log(data1);
-            // 2) Jeśli mamy tytuł pliku, pobierz jego URL
-            let imageUrl = null;
-            if (imageTitle) {
-                const params2 = new URLSearchParams({
-                    action: "query",
-                    titles: imageTitle,
-                    prop: "imageinfo",
-                    iiprop: "url",
-                    format: "json",
-                    origin: "*"
-                });
-                const res2 = await fetch(`${wikiUrl}?${params2.toString()}`);
-                const data2 = await res2.json();
-
-                if (data2.query && data2.query.pages) {
-                    const page2 = Object.values(data2.query.pages)[0];
-                    if (page2 && page2.imageinfo && page2.imageinfo.length > 0) {
-                        imageUrl = page2.imageinfo[0].url;
+            // Getting photos and conditions from AccuWeather (currentconditions?getPhotos=true)
+            let photoUrl = null;
+            let conditionsObj = null;
+            try {
+                const locationKey = weatherData[0].Key;
+                const queryUrl = `https://dataservice.accuweather.com/currentconditions/v1/${locationKey}?language=pl-pl&getPhotos=true`;
+                const response = await fetch(queryUrl, weatherRequestOptions);
+                const data = await response.json();
+                if (Array.isArray(data) && data.length > 0) {
+                    const first = data[0];
+                    conditionsObj = first;
+                    if (first && Array.isArray(first.Photos) && first.Photos.length > 0) {
+                        const p = first.Photos[0];
+                        photoUrl = p.LandscapeLink || p.PortraitLink || null;
                     }
                 }
+            } catch (errPhotos) {
+                console.log("Błąd pobierania zdjęć/warunków z AccuWeather:", errPhotos);
             }
 
             const newCity = {
-                name: nameInput,
-                wikiData: data1,
-                wikiImageUrl: imageUrl,
-                accuwData: weatherData
+                name: name,
+                key: weatherData[0].Key,
+                accuwData: weatherData,
+                photoUrl: photoUrl,
+                conditions: conditionsObj
             };
-            setCities([...cities, newCity]);
+            setCities(prev => [...prev, newCity]);
             setNameInput("");
             setSuggestedCities([]);
         } catch (error) {
             console.log("error", error);
+        } finally {
+            setIsAdding(false);
         }
-        console.log(cities);
-
     }
 
-
     return (
-        <div className={"container align-content-center mt-5"}>
+        <div className={"container align-content-center mt-5 w-100"}>
             <div className="input-group mb-3">
                 <input
                     type="text"
@@ -140,14 +147,24 @@ function Home() {
                     aria-describedby="add_button"
                     value={nameInput}
                     onChange={handleInputChange}
+                    disabled={isAdding}
+                    onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                            e.preventDefault();
+                            if (!isAdding && nameInput.trim() !== '') {
+                                handleAddCity();
+                            }
+                        }
+                    }}
                 />
                 <button
                     className="btn btn-outline-primary"
                     type="button"
                     id="add_button"
                     onClick={handleAddCity}
+                    disabled={isAdding}
                 >
-                    Dodaj miasto
+                    {isAdding ? 'Dodawanie...' : 'Dodaj miasto'}
                 </button>
             </div>
             <div className={"suggested-cities-list"}>
@@ -161,9 +178,9 @@ function Home() {
                     </ul>
                 )}
             </div>
-            <div className={"cities-list"}>
+            <div className={"cities-list d-flex flex-wrap gap-3 mt-4"}>
                 {cities.map((city, index) => (
-                    <CityCard key={index} city={city} />
+                    <CityCard key={city.key || index} city={city} onDelete={() => removeCity(city.key)} />
                 ))}
             </div>
         </div>
